@@ -200,7 +200,7 @@ struct nvme_tcp_request {
 
 
 8. struct nvme_tcp_queue란?
-NVMe-oF TCP 프로토콜에서 사용되는 TCP 소켓 및 데이터 전송 상태를 관리하기 위한 구조체
+//NVMe-oF TCP 프로토콜에서 사용되는 TCP 소켓 및 데이터 전송 상태를 관리하기 위한 구조체
 
 struct nvme_tcp_queue {
 	struct socket		*sock; // TCP 소켓을 나타내는 포인터
@@ -250,7 +250,7 @@ struct nvme_tcp_queue {
 
 
 9. struct nvme_tcp_cmd_pdu 구조체
-이 구조체는 NVMe 컨트롤러로 전송될 커맨드를 표현하기 위해 사용됩니다.
+//이 구조체는 NVMe 컨트롤러로 전송될 커맨드를 표현하기 위해 사용됩니다.
 
 struct nvme_tcp_cmd_pdu {
 	struct nvme_tcp_hdr	hdr; //커맨드 PDU의 헤더 정보를 담는 구조체입니다. NVMe-oF 프로토콜의 헤더 필드들이 포함되어 있습니다.
@@ -258,8 +258,8 @@ struct nvme_tcp_cmd_pdu {
 };
 
 
-10. nvme_tcp_ctrl 구조체 설명
-NVMe-oF 드라이버에서 사용되는 컨트롤러 정보를 나타내는 구조체
+10. struct nvme_tcp_ctrl 설명
+//NVMe-oF 드라이버에서 사용되는 컨트롤러 정보를 나타내는 구조체
 
 struct nvme_tcp_ctrl {
 	/* read only in the hot path */
@@ -277,4 +277,20 @@ struct nvme_tcp_ctrl {
 	struct delayed_work	connect_work;
 	struct nvme_tcp_request async_req;
 	u32			io_queues[HCTX_MAX_TYPES];
+};
+
+
+11. struct nvmf_transport_ops 설명
+//create_ctrl member에 nvme_tcp_create_ctrl을 넣는데 이거 tcp_queue를 생성하기 위한 거의 제일 밑단 과정임
+
+static struct nvmf_transport_ops nvme_tcp_transport = {
+	.name		= "tcp",
+	.module		= THIS_MODULE,
+	.required_opts	= NVMF_OPT_TRADDR,
+	.allowed_opts	= NVMF_OPT_TRSVCID | NVMF_OPT_RECONNECT_DELAY |
+			  NVMF_OPT_HOST_TRADDR | NVMF_OPT_CTRL_LOSS_TMO |
+			  NVMF_OPT_HDR_DIGEST | NVMF_OPT_DATA_DIGEST |
+			  NVMF_OPT_NR_WRITE_QUEUES | NVMF_OPT_NR_POLL_QUEUES |
+			  NVMF_OPT_TOS,
+	.create_ctrl	= nvme_tcp_create_ctrl,
 };
