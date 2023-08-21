@@ -12,6 +12,9 @@ i10_host_init_connection이라는 함수가 있는데, 이게 i10_host_alloc_que
 
 -> 근데 hrtimer를 초기화하는 부분이 i10_host_alloc_queue에서 있는데, 이때 queue 세부 정보를 전부 초기화하는 것으로 보아 admin,setup_ctrl은 더 hardware와 밀접한 부분을 설정하는 함수같음.
 
+-> nvme-oF 표준에 따라서 만들어지는 초기에 connect할때 다 세팅이 된다.
+-> 즉, 굳이 현재 단계에서 볼 필요는 없음..
+
 
 2. 이후 어디서 호출되는 것인지는 모르겠지만, i10_host_queue_rq가 호출되면서 block I/O request가 넘어옴
 
@@ -34,6 +37,9 @@ i10_host_init_connection이라는 함수가 있는데, 이게 i10_host_alloc_que
 */
 
 
+
+
+// Block layer에서 I/O request를 i10 layer로 넘겨주는 맨처음 함수같음
 // core, driver 등등 정보 뽑아내고 request를 네트워크 전송을 위한 unit으로 바꿈
 static blk_status_t i10_host_queue_rq(struct blk_mq_hw_ctx *hctx,
 		const struct blk_mq_queue_data *bd)
@@ -61,6 +67,8 @@ static blk_status_t i10_host_queue_rq(struct blk_mq_hw_ctx *hctx,
 }
 
 
+//기존 nvme_tcp에서는 초기에 request를 queue에 insert할때, req_list와 send_list 두가지로 request를 관리하는데
+//i10은 send_list만 씀, 그 이유에 대해서는 파악해볼 필요가 있을 것 같음?
 static inline void i10_host_queue_request(struct i10_host_request *req)
 {
 	struct i10_host_queue *queue = req->queue;
@@ -68,9 +76,10 @@ static inline void i10_host_queue_request(struct i10_host_request *req)
     // queue를 잠궈놓고, request를 queue의 send_list tail에 추가함
     // 기존 nvme_tcp_queue_request에서는 lockless리스트인 req_list에 넣었는데
     // i10은 그냥 바로 전송 중인 요청들을 담아두는 send_list에 넣네?
-	spin_lock(&queue->lock);
+	spin_lock(&queue->lock); // queue를 잠근다는 것은 동시에 access할 수도 있다. 라는 것인데 어떤 구조로 동시에 queue에 access하는 것인지는 봐야 할 듯?
 	list_add_tail(&req->entry, &queue->send_list);
 	spin_unlock(&queue->lock);
+	// 현재로서는 timer 돌아가서 doorbell timeout되고 queue_work_on이 실행되면 queue에 넣고 빼는게 충돌나서 lock 걸어주는 건가 싶음.
 
     //이 if문 안에 함수 두개 모두 false가 return이 안되면, doorbell 바로 울리러 else문으로 감
 	if (!i10_host_legacy_path(req) && !i10_host_is_nodelay_path(req)) 
