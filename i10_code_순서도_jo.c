@@ -165,7 +165,7 @@ bool queue_work_on(int cpu, struct workqueue_struct *wq,
 enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
 {
 	// timer라는 매개변수를 사용해서 만료된 timer가 속한 i10_host_queue를 찾는 것 같음???
-	//container_of가 뭐하는 함수? 매크로?인지 찾아야 할 듯
+	//container_of가 뭐하는 함수? 매크로?인지 찾아야 할 듯 > container_of 매크로는 포인터를 이용해서 해당 포인터가 속한 구조체의 포인터를 계산해줌
 	struct i10_host_queue *queue =
 		container_of(timer, struct i10_host_queue,
 			doorbell_timer);
@@ -176,6 +176,8 @@ enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
 
 
 //어라 이건 그냥 timeout이네?, gpt한테 물어보고 공부해봐야 할 듯
+//block device의 타임아웃을 처리하는 함수
+//block device에서 IO request가 타임아웃 났을 때 호출됨
 static enum blk_eh_timer_return i10_host_timeout(struct request *rq, bool reserved)
 {
 	struct i10_host_request *req = blk_mq_rq_to_pdu(rq);
