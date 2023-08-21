@@ -175,33 +175,39 @@ enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
 }
 
 
-//어라 이건 그냥 timeout이네?, gpt한테 물어보고 공부해봐야 할 듯
 //block device의 타임아웃을 처리하는 함수
 //block device에서 IO request가 타임아웃 났을 때 호출됨
 static enum blk_eh_timer_return i10_host_timeout(struct request *rq, bool reserved)
 {
+	//해당 IO request의 정보들을 가져옴
 	struct i10_host_request *req = blk_mq_rq_to_pdu(rq);
 	struct i10_host_ctrl *ctrl = req->queue->ctrl;
 	struct nvme_tcp_cmd_pdu *pdu = req->pdu;
 
+	//device 로그에 타임아웃된 request와 관련 정보 기록(큐 ID, request tag, pdu 유형)
 	dev_warn(ctrl->ctrl.device,
 		"queue %d: timeout request %#x type %d\n",
 		i10_host_queue_id(req->queue), rq->tag, pdu->hdr.type);
 
+
+	//컨트롤러(?)의 상태가 LIVE가 아닐 때 = 컨트롤러가 시작 중이거나 이미 에러 복구 중인 상황
 	if (ctrl->ctrl.state != NVME_CTRL_LIVE) {
 		/*
 		 * Teardown immediately if controller times out while starting
 		 * or we are already started error recovery. all outstanding
 		 * requests are completed on shutdown, so we return BLK_EH_DONE.
 		 */
+		//컨트롤러의 에러 복구 작업 queue에서 대기 중인 모든 작업을 실행 보장해줌
 		flush_work(&ctrl->err_work);
+		//컨트롤러 IO queue, admin queue 정리 및 폐기
 		i10_host_teardown_io_queues(&ctrl->ctrl, false);
 		i10_host_teardown_admin_queue(&ctrl->ctrl, false);
 		return BLK_EH_DONE;
 	}
-
+	//컨트롤러의 로그에 에러 복구가 시작됨을 기록
 	dev_warn(ctrl->ctrl.device, "starting error recovery\n");
+	//에러 복구 작업 시작
 	i10_host_error_recovery(&ctrl->ctrl);
-
+	//에러가 복구가 시작되었으므로, 에러 핸들러 타이머 재시작하도록 BLK_EH_RESET_TIMER 반환 
 	return BLK_EH_RESET_TIMER;
 }
