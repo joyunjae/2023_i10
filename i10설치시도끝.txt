@@ -1,0 +1,246 @@
+5.10.73 리눅스 커널 파일만 다운받고, 거기에 i10 올려서 커널을 컴파일하는 버젼
+
+
+
+---------------------
+vmware에 ubuntu 세팅하기
+
+https://releases.ubuntu.com/focal/
+->20.04.6 LTS ubuntu iso 파일
+
+
+60GB 디스크 설정
+Core 4개 설정
+메모리 8GB 설정
+
+
+https://github.com/i10-kernel/i10-recent-kernel
+-> 교수님 깃허브 홈페이지
+
+
+https://docs.kernel.org/block/null_blk.html
+-> null block device 관련 메뉴얼
+
+https://github.com/resource-disaggregation/blk-switch/blob/master/scripts/target_null.sh
+-> 교수님 다음 논문에서 target이랑 host 세팅하신거 github에 올려두신거라 하심.
+
+---------------------
+
+
+sudo sed -i 's/us.archive.ubuntu.com/mirror.kakao.com/g' /etc/apt/sources.list
+
+sudo apt-get update
+
+sudo apt-get -y upgrade
+
+sudo apt-get install -y vim build-essential
+
+sudo apt-get install -y libncurses-dev flex bison openssl libssl-dev libelf-dev dwarves zstd net-tools
+
+sudo -s
+
+cd /usr/src/
+
+wget https://mirrors.edge.kernel.org/pub/linux/kernel/v5.x/linux-5.10.73.tar.xz
+
+tar xvf linux-5.10.73.tar.xz
+
+------------------------
+5.10.73 version의 config.c 백업해두기
+cp -f /usr/src/linux-5.10.73/drivers/nvme/target/configfs.c /usr/src
+
+vim /usr/src/configfs.c
+
+여기 28번째 줄에서
+{NVMF_TRTYPE_I10, "i10"}, 추가해주기
+------------------------
+
+여기에서는 sudo 모드 풀어주고 해야함
+
+cd ~
+
+git clone https://github.com/i10-kernel/i10-recent-kernel.git
+
+cd i10-recent-kernel
+
+sudo cp -rf drivers include /usr/src/linux-5.10.73/
+
+------------------------------------------
+i10의 config.c가 아닌, 5.10.73 version의 config.c로 덮어쓰기
+sudo cp -f /usr/src/configfs.c /usr/src/linux-5.10.73/drivers/nvme/target/configfs.c
+-----------------------------------------
+
+cd /usr/src/linux-5.10.73/
+
+cp /boot/config-$(uname -r) .config
+
+scripts/config --disable SYSTEM_TRUSTED_KEYS
+
+scripts/config --disable SYSTEM_REVOCATION_KEYS
+
+make olddefconfig
+
+make menuconfig
+
+이것만 다시 하면 된다.
+make -j$(nproc) bzImage && make -j$(nproc) modules && make modules_install && make install
+
+
+---------------------
+5.10.73으로 켜기
+
+sudo vi /etc/default/grub
+#GRUB_DEFAULT=0
+GRUB_DEFAULT="1>Ubuntu, with Linux 5.10.73-system-os-"
+#GRUB_TIMEOUT_STYLE=hidden
+GRUB_TIMEOUT=3
+
+이렇게 수정
+
+sudo update-grub
+sudo reboot
+이렇게 명령어 쳐서 재부팅하면
+
+advanced options for ubuntu -> 5.10.73으로 부팅하기
+
+
+
+
+현재 reboot하니까 서버가 죽어버렸음
+
+
+
+
+----------------------------------------------
+
+<target 세팅과정>
+
+
+modprobe nvmet nvmet-tcp i10-target
+
+modprobe null-blk gb=20 bs=4096 irqmode=1 hw_queue_depth=1024 submit-queues=24 nr_devices=2
+-> null block device 만들어줘야함
+->/dev 경로에서 ls 쳐보면 nullb0 이런식으로 null block device가 생성된다
+-> 명령어 이렇게 입력하면 null block device 두개 생겨서 하나는 i10, 하나는 tcp로 쓰면 된다.
+
+mkdir /sys/kernel/config/nvmet/subsystems/nvme_i10      ---> TCP, i10 둘다 만들려고 할 때에는 nvme_i10, nvme_tcp 이런식으로 구분해서 만들어야함.
+cd /sys/kernel/config/nvmet/subsystems/nvme_i10
+
+echo 1 > attr_allow_any_host
+mkdir namespaces/10
+cd namespaces/10
+echo -n /dev/nullb0 > device_path 	OR    echo -n /dev/nullb1 > device_path
+echo 1 > enable
+
+->nullb0을 i10으로 nullb1을 tcp로 사용하자.
+
+mkdir /sys/kernel/config/nvmet/ports/1
+cd /sys/kernel/config/nvmet/ports/1
+echo 192.168.10.122 > addr_traddr (=> target IP address)       :     ifconfig로 ens102f0(i10) 달려있는 서버 내부 ip 따오면 된다. ens102f1(TCP)
+
+echo i10 > addr_trtype      -> tcp 만들때는 echo tcp
+echo 4420 > addr_trsvcid      -> tcp 만들때는 echo 4421 (port번호 다르게 해야함)
+echo ipv4 > addr_adrfam
+
+ln -s /sys/kernel/config/nvmet/subsystems/nvme_i10 /sys/kernel/config/nvmet/ports/1/subsystems/nvme_i10
+-> 뭐 심볼릭 링크 만드는거라고 하심
+
+
+
+-------------------------------------------------
+
+<host 세팅과정>
+
+sudo apt-get install nvme-cli
+modprobe i10-host
+
+nvme connect -t i10 -n nvme_i10 -a 192.168.xxx.xxx (=> target IP address) -s 4420 -q nvme_i10_host
+-> ens102f0
+
+nvme connect -t tcp -n nvme_tcp -a 192.168.xxx.xxx (=> target IP address) -s 4421 -q nvme_tcp_host
+-> 여기에서 치는 ip는 target서버에서 설정했었던 target ip 주소로 설정하면 된다.
+(i10, tcp 잘 보고 연결해라.)
+
+
+nvme list
+-> 연결된 nvme 확인가능
+
+
+cat /sys/module/i10_host/parameters/i10_delayed_doorbell_us
+-> 현재 설정된 doorbell 확인가능(근데 환경이 느리다고 doorbell 늘려야 될 수도 있다고 하심)
+
+echo 100 > /sys/module/i10_host/parameters/i10_delayed_doorbell_us
+-> 이런식으로 바꾸면 된다. 
+
+-------------------------------------------------------------------------------------------------------------
+실험 진행 환경
+
+i10은 약 200k
+tcp는 약 100k 정도로 나올 것
+
+NUMA NODE = P0(core 12), P1(core 12)
+
+NIC가 붙어있는 NUMA node는 DDIO를 쓸 수 있음.
+그래서 NIC가 안붙어있는 쪽은 remote 접근이라 느림.
+그래서 RSS로 돌리면 매번 성능이 달라지는 것.
+
+ARFS를 켜서 측정하면 정확하게 알 수 있음. --- 키는 스크립트가 있음. --- 박재현님께 여쭤보기
+ARFS가 잘 켜졌는지 확인할려면 htop을 켜서 cpu 점유율 확인하면 된다.
+-> 잘 켜졌으면 cpu하나만 잡혀서 100프로 찍히고 잘 안켜졌으면 다른 cpu도 튄다.
+
+
+
+코어 하나만 잡아서 계속 돌려가지고 그냥 테스트하면 된다.
+같은 세팅으로 계속 비교하는게 중요하니까 ARFS키고 해야함.
+
+irq balance -> 리눅스가 멋대로 interrupt를 P1로만 보내는걸 막아버림.
+아마 박재헌님께서 주시는 스크립트에 이 interrupt 지멋대로 하는거 끄는게 있을거임.
+
+이렇게 세팅이 완료되면 항상 비슷한 결과가 나올 것.
+(지금은 random성이 있어서 실험 결과가 항상 일관되지 않음.)
+
+
+NIC 100Gbps 드라이버(intel network) 이것도 깔아야할꺼임 - 실험을 100Gbps에서 진행할려고 그걸 깔아야될거임.
+ARFS도 세팅해야되고.
+
+e810 ice driver
+이거 받아서 make install하면 된다. -> 이걸 설치하고 나서 ARFS를 사용하려면, 뭔 권한 설정하고 어떤 filter
+
+
+- e810 ice driver 설치
+
+ice-1.12.6/src에서 make install
+rmmod ice
+modprobe ice
+
+
+- taskset으로 코어 제한하고 iperf로 속도 측정하는법
+
+ice-1.12.6/scripts에서 ./set_arfs ens102f0, ./set_irq_affinity ens102f0 실행
+server로 사용할 컴퓨터에서 task set -c [제한하고 싶은 코어 번호] iperf -s : 서버 열기
+iperf -t 30 -c 192.168.10.117(server 연 컴퓨터의 원하는 IP) -i 1 -P 4
+(server로 사용하고 있는 컴퓨터에서 htop으로 사용중인 코어 확인 가능)
+
+---------------------------------------------------------------------
+
+
+io depth를 조절해서 실험을 진행하는게 논문에 있는 우상향 그래프임
+i10은 io depth가 적으면 batch가 쌓일때까지 기달려야 하니까 latency가 매우 안좋게 나옴.
+따라서 io depth에 따라서 batch를 조절하는게 논문의 목표임.
+
+
+
+-------------------------------------------
+
+nvme 연결을 끊고 host만 재부팅하면 될 듯.
+nvme help 를 치든 뭘로 하든 메뉴얼 찾아서 연결 끊는법 공부하셈
+
+------------------------------------------------
+
+서버 재부팅 오래걸리니까 재부팅 시킬때 보면서 오래걸리는 부분 찾아가지고 구글링하고 설정하기.
+-> 어떤 옵션 때문에 재부팅이 오래 걸리는데 그거 꺼도 지장없음.
+-> 박재현 조교님이 서버 쓰실 당시 교수님께서 말씀하셨지만 반영 안된 부분임.
+
+-------------------------------------------------
+
+~~.fio 파일 만들어서 fio ~~.fio 돌리면 입출력 알아서 진행된다.
