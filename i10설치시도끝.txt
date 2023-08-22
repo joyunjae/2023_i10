@@ -1,6 +1,4 @@
-5.10.73 리눅스 커널 파일만 다운받고, 거기에 i10 올려서 커널을 컴파일하는 버젼
-
-
+5.10.73 리눅스 커널 파일만 다운받고, 거기에 i10 올려서 커널을 컴파일하는 버전
 
 ---------------------
 vmware에 ubuntu 세팅하기
@@ -145,8 +143,8 @@ echo ipv4 > addr_adrfam
 ln -s /sys/kernel/config/nvmet/subsystems/nvme_i10 /sys/kernel/config/nvmet/ports/1/subsystems/nvme_i10
 
 -------- tcp 설정법 ---------
-// mkdir /sys/kernel/config/nvmet/subsystems/nvme_i10 (i10 설정할 때 만들었으면 안 만들어도 됨)
-cd /sys/kernel/config/nvmet/subsystems/nvme_i10
+mkdir /sys/kernel/config/nvmet/subsystems/nvme_tcp
+cd /sys/kernel/config/nvmet/subsystems/nvme_tcp
 
 echo 1 > attr_allow_any_host
 mkdir namespaces/10
@@ -233,6 +231,9 @@ NUMA NODE = P0(core 12), P1(core 12)
 NIC가 붙어있는 NUMA node는 DDIO를 쓸 수 있음.
 그래서 NIC가 안붙어있는 쪽은 remote 접근이라 느림.
 그래서 RSS로 돌리면 매번 성능이 달라지는 것.
++cat /sys/class/net/ens102f0/device/numa_node
++cat /sys/class/net/ens102f1/device/numa_node
++했을 떄 둘 다 1 나오는 걸 보면 12~23번 cpu(numa node 1)에 다 NIC 연결되어 있는듯?(lscpu로 어떤 numa node에 cpu포함되는지 확인 가능)
 
 ARFS를 켜서 측정하면 정확하게 알 수 있음. --- 키는 스크립트가 있음. --- 박재현님께 여쭤보기
 ARFS가 잘 켜졌는지 확인할려면 htop을 켜서 cpu 점유율 확인하면 된다.
