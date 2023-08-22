@@ -123,6 +123,51 @@ modprobe null-blk gb=20 bs=4096 irqmode=1 hw_queue_depth=1024 submit-queues=24 n
 ->/dev 경로에서 ls 쳐보면 nullb0 이런식으로 null block device가 생성된다
 -> 명령어 이렇게 입력하면 null block device 두개 생겨서 하나는 i10, 하나는 tcp로 쓰면 된다.
 
+-------- i10 설정법 ---------
+mkdir /sys/kernel/config/nvmet/subsystems/nvme_i10
+cd /sys/kernel/config/nvmet/subsystems/nvme_i10
+
+echo 1 > attr_allow_any_host
+mkdir namespaces/10
+cd namespaces/10
+echo -n /dev/nullb0 > device_path (nullb0가 i10용)
+echo 1 > enable
+
+mkdir /sys/kernel/config/nvmet/ports/1
+cd /sys/kernel/config/nvmet/ports/1
+
+echo 192.168.10.122 > addr_traddr(i10이 사용하는 NIC가 ens102f0고 그 ip가 192.168.10.122)
+
+echo i10 > addr_trtype
+echo 4420 > addr_trsvcid (i10 포트 : 4420)
+echo ipv4 > addr_adrfam
+
+ln -s /sys/kernel/config/nvmet/subsystems/nvme_i10 /sys/kernel/config/nvmet/ports/1/subsystems/nvme_i10
+
+-------- tcp 설정법 ---------
+// mkdir /sys/kernel/config/nvmet/subsystems/nvme_i10 (i10 설정할 때 만들었으면 안 만들어도 됨)
+cd /sys/kernel/config/nvmet/subsystems/nvme_i10
+
+echo 1 > attr_allow_any_host
+mkdir namespaces/10
+cd namespaces/10
+echo -n /dev/nullb1 > device_path (nullb1이 tcp용)
+echo 1 > enable
+
+mkdir /sys/kernel/config/nvmet/ports/2 (메뉴얼에 따로 말은 없었는데 그냥 i10 만든거랑 겹치면 안될 것 같아서 2로 만듦)
+cd /sys/kernel/config/nvmet/ports/2
+
+echo 192.168.11.122 > addr_traddr(tcp가 사용하는 NIC가 ens102f1이고 그 ip가 192.168.11.122)
+
+echo tcp > addr_trtype
+echo 4421 > addr_trsvcid (tcp 포트 : 4421)
+echo ipv4 > addr_adrfam
+
+ln -s /sys/kernel/config/nvmet/subsystems/nvme_tcp /sys/kernel/config/nvmet/ports/2/subsystems/nvme_tcp
+
+
+---------------------------------------------------
+//기존 설명
 mkdir /sys/kernel/config/nvmet/subsystems/nvme_i10      ---> TCP, i10 둘다 만들려고 할 때에는 nvme_i10, nvme_tcp 이런식으로 구분해서 만들어야함.
 cd /sys/kernel/config/nvmet/subsystems/nvme_i10
 
@@ -136,7 +181,12 @@ echo 1 > enable
 
 mkdir /sys/kernel/config/nvmet/ports/1
 cd /sys/kernel/config/nvmet/ports/1
-echo 192.168.10.122 > addr_traddr (=> target IP address)       :     ifconfig로 ens102f0(i10) 달려있는 서버 내부 ip 따오면 된다. ens102f1(TCP)
+
++i10 할 때 디렉토리 1 이미 만들어서 그 안에서 설정했어서 tcp할 때 디렉토리 2로 만들었음
+
+echo 192.168.10.122 > addr_traddr (=> target IP address)       :     ifconfig로 ens102f0(i10) 달려있는 서버 내부 ip 따오면 된다. ens102f1(TCP):192.168.11.122
+
++/sys/kernel/config/nvmet/ports/2에서 echo 192.168.11.122 > addr_traddr(tcp)
 
 echo i10 > addr_trtype      -> tcp 만들때는 echo tcp
 echo 4420 > addr_trsvcid      -> tcp 만들때는 echo 4421 (port번호 다르게 해야함)
@@ -154,10 +204,10 @@ ln -s /sys/kernel/config/nvmet/subsystems/nvme_i10 /sys/kernel/config/nvmet/port
 sudo apt-get install nvme-cli
 modprobe i10-host
 
-nvme connect -t i10 -n nvme_i10 -a 192.168.xxx.xxx (=> target IP address) -s 4420 -q nvme_i10_host
+nvme connect -t i10 -n nvme_i10 -a 192.168.10.122 (=> target IP address) -s 4420 -q nvme_i10_host
 -> ens102f0
 
-nvme connect -t tcp -n nvme_tcp -a 192.168.xxx.xxx (=> target IP address) -s 4421 -q nvme_tcp_host
+nvme connect -t tcp -n nvme_tcp -a 192.168.11.122 (=> target IP address) -s 4421 -q nvme_tcp_host
 -> 여기에서 치는 ip는 target서버에서 설정했었던 target ip 주소로 설정하면 된다.
 (i10, tcp 잘 보고 연결해라.)
 
