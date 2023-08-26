@@ -34,6 +34,23 @@ i10_host_init_connection이라는 함수가 있는데, 이게 i10_host_alloc_que
 => 정상적으로 timeout이 발생하면 i10_host_doorbell_timeout이 호출되는데 여기서 aggregation size를 확인하고 이걸 동적으로 조절하는 방식을 시도해보면 좋을 것 같다는 생각.
 (그래서 i10_host_doorbell_timeout에 대해서 공부하는 중)
 
+
+enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
+=> 여기에서 aggregation size를 조절하는게 목표인데 여기에서 드는 의문점.
+
+1. 논문에서 말하는 lane은 nvme link를 생성하는 과정에서 nvme-oF에 따라서 생기는거라고 하셨는데,
+fio돌려서 core 여러개로 늘리면 그에 맞춰서 lane이 늘어나는게 아니라 lane이 고정되어 있는건가??? -> 이제 논문에서의 core가 우리 실험 환경에서의 ens102f0에 대응되는건가?...
+
+
+2. 1번 의문점이 들었던 이유가 이제 single core에서 테스트를 할 때에는 lane이 어차피 한개인 실험을 할테니까 상관이 없는데
+lane이 여러개가 되면 이 lane마다 aggregation size를 따로 적용을 시켜야 될텐데 이러면 전역변수가 아닌, queue 구조체 멤버 변수로 넣어야 되는거 아닐까???
+라는 생각에서 문득 1번 의문점이 떠오름.
+
+
+request의 양이 lane마다 다를테니까?
+근데 그걸 우리가 테스트하는 fio 환경에서는 어떻게 테스트 하는거지?
+논문에서의 core가 우리가 테스트하는 fio 환경에서의 cpu_allowed 해주는 cpu랑 같나?...
+
 */
 
 

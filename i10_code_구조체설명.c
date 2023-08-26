@@ -120,3 +120,20 @@ struct hrtimer {
 	u8				is_soft;
 	u8				is_hard;
 };
+
+
+
+/*
+5. work_struct 구조체란?
+리눅스 커널에서 비동기적인 작업(Asynchronous Work)을 나타내기 위해 사용되는 구조체입니다.
+작업 큐(work queue)와 연계하여 사용되며, 예약된 작업은 작업 큐에서 순차적으로 실행됩니다.
+*/
+
+struct work_struct {
+	atomic_long_t data; //비동기 작업에 대한 데이터나 매개변수를 저장하는데 사용됩니다. 
+	struct list_head entry; // 비동기 작업을 연결 리스트로 관리하기 위한 구조체입니다. 
+	work_func_t func; // 실제 작업을 수행하는 함수의 포인터입니다.
+#ifdef CONFIG_LOCKDEP
+	struct lockdep_map lockdep_map;
+#endif
+};

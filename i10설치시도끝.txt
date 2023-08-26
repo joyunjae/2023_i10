@@ -44,16 +44,15 @@ wget https://mirrors.edge.kernel.org/pub/linux/kernel/v5.x/linux-5.10.73.tar.xz
 tar xvf linux-5.10.73.tar.xz
 
 ------------------------
+
 5.10.73 version의 config.c 백업해두기
 cp -f /usr/src/linux-5.10.73/drivers/nvme/target/configfs.c /usr/src
 
-vim /usr/src/configfs.c
+vim /usr/src/configfs.c 	<- 28번째 line에 {NVMF_TRTYPE_I10, "i10"}, 추가해주기
 
-여기 28번째 줄에서
-{NVMF_TRTYPE_I10, "i10"}, 추가해주기
-------------------------
 
-여기에서는 sudo 모드 풀어주고 해야함
+
+여기에서는 sudo 모드 풀어주고 해야함(exit OR su - [username])
 
 cd ~
 
@@ -80,16 +79,15 @@ make olddefconfig
 
 make menuconfig
 
-이것만 다시 하면 된다.
 make -j$(nproc) bzImage && make -j$(nproc) modules && make modules_install && make install
-
+-> 만약 i10을 수정하면 이 부분만 다시 실행시켜주면 된다.
 
 ---------------------
 5.10.73으로 켜기
 
 sudo vi /etc/default/grub
 #GRUB_DEFAULT=0
-GRUB_DEFAULT="1>Ubuntu, with Linux 5.10.73-system-os-"
+GRUB_DEFAULT="1>Ubuntu, with Linux 5.10.73"
 #GRUB_TIMEOUT_STYLE=hidden
 GRUB_TIMEOUT=3
 
@@ -100,13 +98,6 @@ sudo reboot
 이렇게 명령어 쳐서 재부팅하면
 
 advanced options for ubuntu -> 5.10.73으로 부팅하기
-
-
-
-
-현재 reboot하니까 서버가 죽어버렸음
-
-
 
 
 ----------------------------------------------
