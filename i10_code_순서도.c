@@ -197,6 +197,49 @@ enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
 }
 
 
+//queue->io_work에 바인딩 되어 있는 함수
+//i10 host queue에서 수행되야하는 IO request들을 처리하는 함수
+static void i10_host_io_work(struct work_struct *w)
+{
+	//인자로 들어온 work_struct에서 큐를 가져옴
+	struct i10_host_queue *queue =
+		container_of(w, struct i10_host_queue, io_work);
+	//현재 시간에서 1 msec를 더해서 start에 저장(IO request 처리에 대한 제한시간을 두기 위함)
+	unsigned long start = jiffies + msecs_to_jiffies(1);
+
+	//1msec 동안 IO request를 처리하는 시도를 하는 것 같음
+	do {
+		bool pending = false;
+		int result;
+
+		//queue에서 데이터를 보내는 시도를 함(result는 보낸 데이터 양이나 오류 코드를 저장함)
+		result = i10_host_try_send(queue);
+		//성공하면 pending = true
+		if (result > 0) {
+			pending = true;
+		//실패
+		} else if (unlikely(result < 0)) {
+			dev_err(queue->ctrl->ctrl.device,
+				"failed to send request %d\n", result);
+			//-EPIPE(파이프가 깨진 상태라고 함)가 아닌 다른 오류면 해당 request를 실패처리하고 작업 완료
+			if (result != -EPIPE)
+				i10_host_fail_request(queue->request);
+			i10_host_done_send_req(queue);
+			return;
+		}
+		//queue에서 데이터를 받아오는 시도를 함
+		result = i10_host_try_recv(queue);
+		//데이터 잘 받아오면 pending = true
+		if (result > 0)
+			pending = true;
+		//실패하면 함수 종료
+		if (!pending)
+			return;
+
+	} while (time_before(jiffies, start));
+	//1msec 내에 처리 못하면 다시 큐에 추가해서 나중에 처리하도록 함
+	queue_work_on(queue->io_cpu, i10_host_wq, &queue->io_work);
+}
 
 
 //block device의 타임아웃을 처리하는 함수
