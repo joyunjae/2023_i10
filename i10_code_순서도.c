@@ -187,9 +187,16 @@ enum hrtimer_restart i10_host_doorbell_timeout(struct hrtimer *timer)
 		container_of(timer, struct i10_host_queue,
 			doorbell_timer);
 	//해당 queue 찾았으면, timeout이니까 cpu에 작업 예약 걸어야지
+	
+	// queue_work_on 함수는 작업을 담당하는 커널 worker thread를 깨우는 역할
 	queue_work_on(queue->io_cpu, i10_host_wq, &queue->io_work);
+	//여기서 thread가 깨어나면 queue->io_work를 호출하는데
+	//i10_host_alloc_queue부분에서 INIT_WORK(&queue->io_work, i10_host_io_work); 로 바인딩이 되어 있음
+	//i10_host_io_work 부분을 확인해봐야함
 	return HRTIMER_NORESTART; //함수가 끝날 때 HRTIMER_NORESTART를 반환하여 HRTimer의 재시작이 필요하지 않음을 알려줍니다.
 }
+
+
 
 
 //block device의 타임아웃을 처리하는 함수
