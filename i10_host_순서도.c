@@ -355,7 +355,7 @@ static bool i10_host_send_caravan(struct i10_host_queue *queue)
 }
 
 
-// 소켓을 통해서 뭘 주고 받는데... 씹년... 정체가 뭐냐 이거
+// 소켓을 통해서 뭘 주고 받는데... 정체가 뭐냐 이거
 // 내가 지금까지 보낸 data 잘 받았는지, 얼마나 받았는지 알려줘 이건거 같은데
 static int i10_host_try_recv(struct i10_host_queue *queue)
 {
