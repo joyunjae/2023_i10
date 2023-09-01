@@ -31,6 +31,8 @@ i10_host_init_connection이라는 함수가 있는데, 이게 i10_host_alloc_que
 6.2. nodelay_path라면 바로 queue->io_cpu에 working 예약 걸어버림
 
 
+
+
 => 정상적으로 timeout이 발생하면 i10_host_doorbell_timeout이 호출되는데 여기서 aggregation size를 확인하고 이걸 동적으로 조절하는 방식을 시도해보면 좋을 것 같다는 생각.
 (그래서 i10_host_doorbell_timeout에 대해서 공부하는 중)
 
@@ -46,10 +48,14 @@ fio돌려서 core 여러개로 늘리면 그에 맞춰서 lane이 늘어나는�
 lane이 여러개가 되면 이 lane마다 aggregation size를 따로 적용을 시켜야 될텐데 이러면 전역변수가 아닌, queue 구조체 멤버 변수로 넣어야 되는거 아닐까???
 라는 생각에서 문득 1번 의문점이 떠오름.
 
-
 request의 양이 lane마다 다를테니까?
 근데 그걸 우리가 테스트하는 fio 환경에서는 어떻게 테스트 하는거지?
 논문에서의 core가 우리가 테스트하는 fio 환경에서의 cpu_allowed 해주는 cpu랑 같나?...
+
+
+위 궁금증에 대해서는 lane이 이미 nvme link 생성하면서 nvme cli이 core 갯수 파악해서 target이랑 맵핑 해줬으니까 lane은 이미 만들어져 있다고 생각하면 되고
+lane 마다 aggregation size를 따로 가져야 될테니 어딘가의 멤버 변수로 가지는게 맞다!
+그리고 IOPS의 양은 iodepth를 조절하면서 진행하는 것이 맞다.
 
 */
 
@@ -214,11 +220,13 @@ static void i10_host_io_work(struct work_struct *w)
 
 		//queue에서 데이터를 보내는 시도를 함(result는 보낸 데이터 양이나 오류 코드를 저장함)
 		result = i10_host_try_send(queue);
-		//성공하면 pending = true
+		
+		//성공 : data를 보냈거나, caravan 형태로 묶었다??? <- req_state에 따른 ret 값을 분석해봐야 제대로 알 것 같음
 		if (result > 0) {
-			pending = true;
-		//실패
-		} else if (unlikely(result < 0)) {
+			pending = true; //성공하면 pending = true
+		} 
+		//실패 <- 이건... 실패할 일이 없을거 같으니 분석을 안해도 될 거 같음, maybe?
+		else if (unlikely(result < 0)) {
 			dev_err(queue->ctrl->ctrl.device,
 				"failed to send request %d\n", result);
 			//-EPIPE(파이프가 깨진 상태라고 함)가 아닌 다른 오류면 해당 request를 실패처리하고 작업 완료
@@ -227,10 +235,8 @@ static void i10_host_io_work(struct work_struct *w)
 			i10_host_done_send_req(queue);
 			return;
 		}
-		//queue에서 데이터를 받아오는 시도를 함
-		result = i10_host_try_recv(queue);
-		//데이터 잘 받아오면 pending = true
-		if (result > 0)
+		result = i10_host_try_recv(queue); //queue에서 데이터를 받아오는 시도를 함
+		if (result > 0) //데이터 잘 받아오면 pending = true
 			pending = true;
 		//실패하면 함수 종료
 		if (!pending)
@@ -238,8 +244,134 @@ static void i10_host_io_work(struct work_struct *w)
 
 	} while (time_before(jiffies, start));
 	//1msec 내에 처리 못하면 다시 큐에 추가해서 나중에 처리하도록 함
+	//우리 테스트에서는 이 일이 일어나지 않겠지 1msec동안 request 처리를 못하다니 성능 박살일듯
 	queue_work_on(queue->io_cpu, i10_host_wq, &queue->io_work);
 }
+
+
+// i10 host queue에 있는 request를 보내는 함수 
+static int i10_host_try_send(struct i10_host_queue *queue)
+{
+	struct i10_host_request *req;
+	int ret = 1;
+
+	// 현재 queue에 처리할 요청이 있는지 확인함
+	if (!queue->request) {
+		queue->request = i10_host_fetch_request(queue); //처리할 요청 없으면 queue에서 request 가져옴
+		if (!queue->request && !queue->caravan_len) // queue에서 가져올 request도 없고 caravan도 없으면 try_send 종료
+			return 0; // 보낼 data가 없다는 의미겠지
+	}
+
+	/* Send i10 caravans now */
+	// 우리가 테스트하는 상황에서 doorbell이 울린 직후에는 이게 true일리 없음. 아직 caravan 생성도 안한 request 상태임
+	if (i10_host_send_caravan(queue)) { // 이게 true면 caravan 당장 쏴야함
+		
+		// caravan data를 소켓으로 전송하는 과정인 것 같음
+		struct msghdr msg = { .msg_flags = MSG_DONTWAIT | MSG_EOR };
+		int i, i10_ret;
+
+		if (i10_host_sndbuf_nospace(queue, queue->caravan_len)) {
+			set_bit(SOCK_NOSPACE,
+				&queue->sock->sk->sk_socket->flags);
+			return 0;
+		}
+
+		i10_ret = kernel_sendmsg(queue->sock, &msg,
+				queue->caravan_iovs,
+				queue->nr_iovs,
+				queue->caravan_len);
+
+		if (unlikely(i10_ret <= 0)) {
+			dev_err(queue->ctrl->ctrl.device,
+				"I10_HOST: kernel_sendmsg fails (i10_ret %d)\n",
+				i10_ret);
+			return i10_ret;
+		}
+
+		for (i = 0; i < queue->nr_mapped; i++)
+			kunmap(queue->caravan_mapped[i]);
+
+		queue->nr_req = 0;
+		queue->nr_iovs = 0;
+		queue->nr_mapped = 0;
+		queue->caravan_len = 0;
+		queue->send_now = false;
+	}
+
+	if (queue->request) // 현재 queue에 처리할 요청이 있으면
+		req = queue->request; // i10_host_request 구조체인 req에 현재 처리할 request 포인터 옮겨서 저장함
+	else
+		return 0;
+
+	// request가 있으니 request 상태에 따라서 이게 호출이 되겠지
+	// 이런거 호출을 하다보면 caravan 생성되고, send_now가 true가 되기도 함 - 일단 내용 존나 많아져서 여기 이후로는 분석 시도 안해봄
+	if (req->state == I10_HOST_SEND_CMD_PDU) {
+		ret = i10_host_try_send_cmd_pdu(req);
+		if (ret <= 0)
+			goto done;
+		if (!i10_host_has_inline_data(req))
+			return ret;
+	}
+
+	if (req->state == I10_HOST_SEND_H2C_PDU) {
+		ret = i10_host_try_send_data_pdu(req);
+		if (ret <= 0)
+			goto done;
+	}
+
+	if (req->state == I10_HOST_SEND_DATA) {
+		ret = i10_host_try_send_data(req);
+		if (ret <= 0)
+			goto done;
+	}
+
+	if (req->state == I10_HOST_SEND_DDGST)
+		ret = i10_host_try_send_ddgst(req);
+done:
+	if (ret == -EAGAIN)
+		ret = 0;
+	return ret;
+}
+
+
+/* 
+3가지 조건을 확인해서 queue에 있는 data를 전송할지 여부를 판단함
+정확히 이해한건 아니지만 추측을 해보자면
+일단 우리는 doorbell이 울린 상황을 생각하고 있는거니까, timeout에서 HRTIMER_NORESTART 이걸 반환했으니 timer는 꺼져있을거임
+근데 doorbell이 울린 상황을 생각해보면 send_now는 당연히 false고, queue->request는 있는 상태일테니까
+doorbell이 울린 직후의 i10_host_send_caravan을 false를 반환할 것임
+*/
+static bool i10_host_send_caravan(struct i10_host_queue *queue)
+{
+	/* 1. Caravan becomes full (64KB), : i10 caravan이 꽉 찬 경우
+	 * 2. No-delay request arrives,  : no-delay request가 도착한 경우
+	 * 3. No more request remains in i10 queue : queue 내부에 더 이상 처리할 request가 없는 경우
+	 */
+	return queue->send_now || // send_now는 caravan이 full이거나, nodelay_path일때 true로 설정된다
+		(!hrtimer_active(&queue->doorbell_timer) && // timer가 꺼져있으면 true && 
+		!queue->request && queue->caravan_len); // 현재 처리해야할 request가 없으면 true && caravan이 있으면 true
+	// send_now가 true이거나
+	// (timer 꺼져 있음, 현재 처리해야할 request가 없음, caravan이 있음) 세가지 조건을 만족하면 true 반환
+}
+
+
+// 소켓을 통해서 뭘 주고 받는데... 씹년... 정체가 뭐냐 이거
+// 내가 지금까지 보낸 data 잘 받았는지, 얼마나 받았는지 알려줘 이건거 같은데
+static int i10_host_try_recv(struct i10_host_queue *queue)
+{
+	struct socket *sock = queue->sock;
+	struct sock *sk = sock->sk;
+	read_descriptor_t rd_desc;
+	int consumed;
+
+	rd_desc.arg.data = queue;
+	rd_desc.count = 1;
+	lock_sock(sk);
+	consumed = sock->ops->read_sock(sk, &rd_desc, i10_host_recv_skb);
+	release_sock(sk);
+	return consumed;
+}
+
 
 
 //block device의 타임아웃을 처리하는 함수
